@@ -1,0 +1,100 @@
+UniFi OS: temporary system CA mitigation for the October 2026 eMudhra incident
+Prepared 2026-10-24
+
+This is an independently prepared workaround, NOT an official Ubiquiti script
+or a firmware patch. Share this file together with unifi-emudhra-mitigation.py.
+See README.md for the tested/untested compatibility matrix and release-channel
+guidance, dated 2026-10-24.
+Prefer a supported vendor update when one is available for your device.
+
+Scope and compatibility
+-----------------------
+Tested on Cloud Gateway Fiber with UniFi OS 5.1.33. Requires root, Python 3.9+,
+Debian-style ca-certificates and /usr/sbin/update-ca-certificates. The script
+checks this layout and a UniFi firmware marker, but that does not certify every
+UniFi model. It is not intended for legacy USG/EdgeOS, switches, APs, Windows,
+or other appliances. No dependencies or packages are installed.
+
+The workaround disables two system trust anchors by exact SHA-256 fingerprint:
+
+emSign ECC Root CA - G3
+86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b
+
+AAA Certificate Services (Debian filename: Comodo_AAA_Services_root.crt)
+d7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4
+
+The second root covers an alternate cross-signed path. Removing it can also
+break legitimate services using that root. The root keys themselves are not
+the compromised intermediate keys. Other emSign roots are left alone.
+
+Use
+---
+Inspect the script, then copy it onto your own gateway using your usual secure
+file-transfer method. Run it in an SSH session. Do not pipe an unreviewed remote
+download directly into a root shell.
+
+Inspect only (default; no changes):
+    python3 unifi-emudhra-mitigation.py
+
+Apply as root and perform live verification:
+    python3 unifi-emudhra-mitigation.py --apply --verify-online
+
+Inspect and verify again later:
+    python3 unifi-emudhra-mitigation.py --verify-online
+
+Live verification contacts the incident researcher's two test sites and ui.com
+without credentials. It bypasses proxy settings and curl configuration so those
+cannot give a misleading result. This requires direct internet access. Test
+sites must fail specifically with certificate-chain errors; a DNS failure or
+timeout is not a pass. The ui.com control must still validate successfully.
+Online checks are optional; apply always verifies the local trust store.
+
+What changes
+------------
+The script prints BACKUP=/var/backups/unifi-emudhra/backup-... and saves the
+original configuration, public CA bundle, and checksums in that protected
+directory. It disables the two exact entries in /etc/ca-certificates.conf and
+runs the system's update-ca-certificates command. It verifies both the bundle
+and certificate directory, and checks that unrelated anchors remain present.
+It refuses mismatched fingerprints and ambiguous configuration entries.
+
+The system updater may run existing local certificate-update hooks. The script
+does not directly restart services, reboot, change firewall rules, change SSH,
+edit package sources, or upgrade firmware. It restores the original
+configuration and rebuilds the store if applying or local verification fails;
+if that recovery also fails, use the printed backup for operator recovery.
+An interruption such as power loss requires inspection before running again.
+
+Exit codes: 0 = requested local operation completed; 1 = local error;
+2 = online checks failed or were inconclusive. A dry run returning 0 does not
+mean the system is mitigated: read its TRUSTED/not-found output. Online failure
+does not automatically undo a successfully applied local mitigation.
+
+Rollback
+--------
+Use the exact BACKUP directory printed by your own run:
+    python3 unifi-emudhra-mitigation.py --rollback /var/backups/unifi-emudhra/backup-REPLACE_ME --accept-restored-risk
+
+Rollback restores trust in the affected chains. Use only for a deliberate
+recovery decision. The script checks the backup checksum and refuses to
+overwrite configuration changed since application. It also refuses rollback
+if the source certificates have since been removed or replaced by an update.
+Do not restore an old CA bundle over a newer vendor update.
+
+Limits and follow-up
+--------------------
+This changes only the OS CA store. Node.js, Java, containers, other applications
+with bundled roots, and processes caching trust can remain exposed. Existing
+TLS sessions are not revalidated. Apply appropriate vendor application updates
+and arrange any necessary restarts separately. This is not a PHP2Shell fix.
+
+Firmware updates or appliance provisioning may replace this configuration.
+Re-run inspection/verification after updates and reboot. Keep current vendor
+firmware and application fixes as the long-term solution. Do not mistake this
+workaround for a complete security assessment or proof of no compromise.
+
+References
+----------
+https://bugs.debian.org/1151446
+https://emudhra.we-have-a-problem.com/
+https://community.ui.com/releases/UniFi-Network-Application-10-6-109/772020d5-1426-4015-bbd6-631d28803933
